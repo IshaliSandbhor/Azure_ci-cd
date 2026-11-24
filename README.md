@@ -53,8 +53,8 @@ cd web && npm ci && npm run build
 
 ## Azure DevOps setup
 
-1. Push this repository to GitHub or Azure Repos and create an Azure DevOps project.
-2. Connect the repository to Azure DevOps and create a pipeline from `azure-pipelines.yml`.
+1. Create an Azure DevOps project and connect the existing GitHub repository.
+2. Create a pipeline from `azure-pipelines.yml`.
 3. Create a variable group named `taskboard-platform` and authorize it for these pipelines.
 4. Add the values listed below. Keep credentials in Azure DevOps service connections or secret variables, never in YAML.
 5. Create an Azure Resource Manager service connection with workload identity federation if supported by your Azure DevOps organization. Name it `azure-platform`; grant only the required scoped roles.
@@ -104,15 +104,12 @@ helm rollback taskboard 1 --namespace taskboard
 
 The sample exposes HTTP ingress for demonstration. Add TLS (for example cert-manager with a DNS name) before using it outside a demo environment. The API has readiness and liveness endpoints, non-root container execution, resource requests/limits, and rolling deployments. Add persistent storage or a managed database before treating task data as durable.
 
-## Push to GitHub
+## GitHub repository
 
-The empty public repository `IshaliSandbhor/Azure_ci-cd` is ready for this project. From the project directory:
+This project is published on the `main` branch of [IshaliSandbhor/Azure_ci-cd](https://github.com/IshaliSandbhor/Azure_ci-cd). To get a local copy:
 
 ```sh
-git remote add origin https://github.com/IshaliSandbhor/Azure_ci-cd.git
-git add .
-git commit -m "Initial TaskBoard Azure platform"
-git push -u origin main
+git clone https://github.com/IshaliSandbhor/Azure_ci-cd.git
 ```
 
 Do not add service principal secrets, kubeconfigs, publish profiles, or Azure credentials to the repository.
