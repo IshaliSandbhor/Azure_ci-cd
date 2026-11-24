@@ -1,0 +1,53 @@
+trigger: none
+pr: none
+
+parameters:
+  - name: confirmProvisioning
+    displayName: Confirm Azure infrastructure provisioning (incurs charges)
+    type: boolean
+    default: false
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: taskboard-platform
+
+stages:
+  - stage: Provision
+    displayName: Provision Azure platform
+    condition: and(succeeded(), eq('${{ parameters.confirmProvisioning }}', 'true'))
+    jobs:
+      - job: Bicep
+        steps:
+          - checkout: self
+
+          - task: AzureCLI@2
+            displayName: Validate and deploy Bicep
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                az bicep install
+                az bicep build --file infra/main.bicep
+                az deployment sub what-if \
+                  --location "$(location)" \
+                  --template-file infra/main.bicep \
+                  --parameters \
+                    resourceGroupName="$(resourceGroupName)" \
+                    location="$(location)" \
+                    clusterName="$(clusterName)" \
+                    acrName="$(acrName)" \
+                    pipelinePrincipalId="$(azurePipelinePrincipalId)"
+                az deployment sub create \
+                  --name "taskboard-$(Build.BuildId)" \
+                  --location "$(location)" \
+                  --template-file infra/main.bicep \
+                  --parameters \
+                    resourceGroupName="$(resourceGroupName)" \
+                    location="$(location)" \
+                    clusterName="$(clusterName)" \
+                    acrName="$(acrName)" \
+                    pipelinePrincipalId="$(azurePipelinePrincipalId)"

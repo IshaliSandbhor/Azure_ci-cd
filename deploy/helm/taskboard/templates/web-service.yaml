@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "taskboard.fullname" . }}-web
+  labels:
+    app.kubernetes.io/name: {{ include "taskboard.name" . }}-web
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.web.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: {{ include "taskboard.name" . }}-web
+    app.kubernetes.io/instance: {{ .Release.Name }}

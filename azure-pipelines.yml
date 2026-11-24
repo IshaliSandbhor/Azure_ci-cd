@@ -1,0 +1,146 @@
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - api/**
+      - web/**
+      - deploy/**
+      - infra/**
+      - azure-pipelines.yml
+      - azure-pipelines-infra.yml
+
+pr:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - api/**
+      - web/**
+      - deploy/**
+      - infra/**
+      - azure-pipelines.yml
+      - azure-pipelines-infra.yml
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: taskboard-platform
+  - name: imageTag
+    value: $(Build.SourceVersion)
+  - name: acrLoginServer
+    value: $(acrName).azurecr.io
+
+stages:
+  - stage: Validate
+    displayName: Validate and build
+    jobs:
+      - job: Validate
+        steps:
+          - checkout: self
+
+          - task: UseDotNet@2
+            displayName: Install .NET 10 LTS
+            inputs:
+              packageType: sdk
+              version: 10.0.x
+
+          - script: dotnet test api/TaskBoard.sln --configuration Release
+            displayName: Test API
+
+          - task: NodeTool@0
+            displayName: Install Node.js 20
+            inputs:
+              versionSpec: 20.x
+
+          - script: |
+              npm ci
+              npm run build
+            workingDirectory: web
+            displayName: Build frontend
+
+          - script: |
+              docker build --tag taskboard-api:$(Build.SourceVersion) --file api/TaskBoard.Api/Dockerfile api
+              docker build --tag taskboard-web:$(Build.SourceVersion) --file web/Dockerfile web
+            displayName: Build container images
+
+          - task: HelmInstaller@1
+            displayName: Install Helm 3
+            inputs:
+              helmVersionToInstall: 3.15.4
+
+          - script: |
+              helm lint deploy/helm/taskboard
+              helm template taskboard deploy/helm/taskboard --set ingress.host=tasks.example.com
+            displayName: Validate Helm chart
+
+          - script: |
+              az bicep install
+              az bicep build --file infra/main.bicep --stdout > /dev/null
+            displayName: Validate Bicep templates
+
+  - stage: Deploy
+    displayName: Publish and deploy to AKS
+    dependsOn: Validate
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: DeployTaskBoard
+        displayName: Deploy TaskBoard
+        environment: taskboard-dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - task: HelmInstaller@1
+                  displayName: Install Helm 3
+                  inputs:
+                    helmVersionToInstall: 3.15.4
+
+                - task: KubeloginInstaller@0
+                  displayName: Install kubelogin
+                  inputs:
+                    kubeloginVersion: latest
+
+                - task: AzureCLI@2
+                  displayName: Push images and deploy Helm release
+                  inputs:
+                    azureSubscription: $(azureServiceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+
+                      az acr login --name "$(acrName)"
+                      docker build --tag "$(acrLoginServer)/taskboard-api:$(imageTag)" --file api/TaskBoard.Api/Dockerfile api
+                      docker build --tag "$(acrLoginServer)/taskboard-web:$(imageTag)" --file web/Dockerfile web
+                      docker push "$(acrLoginServer)/taskboard-api:$(imageTag)"
+                      docker push "$(acrLoginServer)/taskboard-web:$(imageTag)"
+
+                      az aks get-credentials \
+                        --resource-group "$(resourceGroupName)" \
+                        --name "$(clusterName)" \
+                        --overwrite-existing
+
+                      helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+                      helm repo update
+                      helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+                        --namespace ingress-nginx \
+                        --create-namespace \
+                        --set controller.service.type=LoadBalancer \
+                        --wait
+
+                      helm upgrade --install taskboard deploy/helm/taskboard \
+                        --namespace taskboard \
+                        --create-namespace \
+                        --set api.image.repository="$(acrLoginServer)/taskboard-api" \
+                        --set api.image.tag="$(imageTag)" \
+                        --set web.image.repository="$(acrLoginServer)/taskboard-web" \
+                        --set web.image.tag="$(imageTag)" \
+                        --set ingress.host="$(appHostName)" \
+                        --wait \
+                        --timeout 5m
